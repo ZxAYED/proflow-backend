@@ -1,0 +1,240 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+//
+// ENUMS
+//
+enum Role {
+  ADMIN
+  USER
+  BUYER
+  SOLVER
+}
+
+enum ProjectStatus {
+  OPEN
+  ASSIGNED
+  COMPLETED
+}
+
+enum TaskStatus {
+  IN_PROGRESS
+  SUBMITTED
+  COMPLETED
+}
+
+enum SubmissionStatus {
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+}
+
+//
+// AUTH / USERS
+//
+model User {
+  id           String  @id @default(cuid())
+  email        String  @unique
+  passwordHash String
+  name         String?
+  role         Role    @default(SOLVER) // Default to SOLVER as per requirements
+
+  isVerified Boolean @default(false) // Set to true by admin when approved as buyer
+
+  // OTP for password reset
+  otp       String?
+  otpExpiry DateTime?
+
+  avatarUrl String? // Supabase URL for user profile image
+
+  solverProfile SolverProfile?
+  buyerProfile  BuyerProfile?
+
+  // Relations to Marketplace Projects
+  buyerProjects    Project[]     @relation("BuyerProjects")
+  assignedProjects Project[]     @relation("AssignedSolverProjects")
+  tasks            Task[]
+  workRequests     WorkRequest[]
+  submissions      Submission[]     @relation("SolverSubmissions")
+  
+  // Relation to Personal Projects
+  personalProjects PersonalProject[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+//
+// BUYER PROFILE (simplified)
+//
+model BuyerProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  companyName String?
+  bio         String?
+  location    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+//
+// SOLVER PROFILE (with additional fields for personal projects, education, and experience)
+//
+model SolverProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title    String? // Profile title
+  bio      String? // Short bio
+  location String?
+
+  skills String[] // Array of skills, e.g., ["React", "Node.js"]
+
+  // URLs for portfolios and professional sites
+  portfolioUrl String?
+  githubUrl    String?
+  linkedinUrl  String?
+
+  // Optional fields for solver profile image and portfolio information
+  profileImageUrl String? // Profile image URL for the solver
+  projectImageUrl String? // Project image URL for the solver's project (mandatory)
+
+  // Additional information about the solver
+  educationBackground String?
+  workingExperience   String?
+
+  // This field helps track the updates of the solver profile
+  isEditable Boolean @default(true) // Initially editable, later it can be locked
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+//
+// PERSONAL PROJECTS (new table for personal projects)
+//
+model PersonalProject {
+  id          String   @id @default(cuid())
+  solverId    String
+  title       String
+  description String?
+  projectUrl  String?
+  skills      String[] // Skills used for the project
+
+  solver User @relation(fields: [solverId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([solverId])
+}
+
+//
+// PROJECT MODEL (with image)
+//
+model Project {
+  id          String    @id @default(cuid())
+  title       String
+  description String
+  tags        String[] // e.g., ["React", "UI", "API"]
+  budget      Int?
+  deadline    DateTime?
+
+  status ProjectStatus @default(OPEN)
+
+  // Buyer owner
+  buyerId String
+  buyer   User   @relation("BuyerProjects", fields: [buyerId], references: [id], onDelete: Cascade)
+
+  // One assigned solver (optional for now)
+  assignedSolverId String?
+  assignedSolver   User?   @relation("AssignedSolverProjects", fields: [assignedSolverId], references: [id], onDelete: SetNull)
+
+  // Optional project image (buyer can choose)
+  projectImageUrl String?
+
+  requests WorkRequest[]
+  tasks    Task[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([buyerId])
+  @@index([status])
+  @@index([assignedSolverId])
+}
+
+//
+// WORK REQUEST MODEL (for buyers to view solver requests)
+//
+model WorkRequest {
+  id        String     @id @default(cuid())
+  projectId String
+  solverId  String
+  status    TaskStatus @default(IN_PROGRESS)
+  message   String?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  solver  User    @relation(fields: [solverId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, solverId])
+}
+
+//
+// TASK MODEL (for problem solvers to work on a project)
+//
+model Task {
+  id          String     @id @default(cuid())
+  projectId   String
+  solverId    String // must equal project.assignedSolverId (enforce in service)
+  title       String
+  description String?
+  deadline    DateTime?
+  timeline    DateTime?
+  status      TaskStatus @default(IN_PROGRESS)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  solver  User    @relation(fields: [solverId], references: [id], onDelete: Cascade)
+
+  submissions Submission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([solverId])
+}
+
+//
+// SUBMISSION MODEL (for task submissions)
+//
+model Submission {
+  id        String           @id @default(cuid())
+  taskId    String
+  solverId  String
+  fileUrl   String
+  status    SubmissionStatus @default(SUBMITTED)
+  reviewComments String?
+
+  task      Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  solver    User   @relation("SolverSubmissions", fields: [solverId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([taskId])
+  @@index([solverId])
+}
