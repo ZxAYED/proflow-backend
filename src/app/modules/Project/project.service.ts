@@ -1,7 +1,13 @@
-import { Prisma, ProjectStatus, TaskStatus } from "@prisma/client";
+import {
+    Prisma,
+    ProjectStatus,
+    RequestStatus
+} from "@prisma/client";
 import { buildDynamicFilters } from "../../../helpers/buildDynamicFilters";
 import { paginationHelper } from "../../../helpers/paginationHelper";
+import { logActivity } from "../../../shared/activityLog";
 import prisma from "../../../shared/prisma";
+import { sendNotificationEmail } from "../../../utils/notificationSender";
 import {
     ICreateProjectPayload,
     IProjectAssignPayload,
@@ -14,15 +20,23 @@ const createProject = async (payload: ICreateProjectPayload) => {
     data: {
       title: payload.title,
       description: payload.description,
-      skillsRequired: payload.skillsRequired, // Using the new field
-      tags: payload.skillsRequired, // keeping tags for now as mirror
-      timeline: new Date(payload.timeline), // Using timeline
-      deadline: new Date(payload.timeline), // Mirror to deadline
+      skills: payload.skillsRequired,
+      timeline: new Date(payload.timeline),
+      deadline: new Date(payload.timeline),
       buyerId: payload.buyerId,
       budget: payload.budget,
       status: ProjectStatus.OPEN,
+      tags: payload.skillsRequired, // Populate tags for now as well
     },
   });
+
+  await logActivity(
+    "PROJECT_CREATED",
+    `Project ${result.title} created`,
+    payload.buyerId,
+    result.id,
+  );
+
   return result;
 };
 
@@ -44,7 +58,7 @@ const getAllProjects = async (options: any, filters: any) => {
   // Add tags/skills filter if provided
   if ((filterData as any).skills) {
     const skills = ((filterData as any).skills as string).split(",");
-    whereConditions.tags = {
+    whereConditions.skills = {
       hasSome: skills,
     };
   }
@@ -81,7 +95,100 @@ const getAllProjects = async (options: any, filters: any) => {
   };
 };
 
-import { sendNotificationEmail } from "../../../utils/notificationSender";
+// Get Project By Id
+const getProjectById = async (id: string) => {
+  const result = await prisma.project.findUnique({
+    where: { id },
+    include: {
+      buyer: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+        },
+      },
+      assignedSolver: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+        },
+      },
+      requests: {
+        include: {
+          solver: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              solverProfile: true,
+            },
+          },
+        },
+      },
+    },
+  });
+  return result;
+};
+
+// Update Project
+const updateProject = async (
+  id: string,
+  payload: Partial<ICreateProjectPayload> & { buyerId: string },
+) => {
+  const project = await prisma.project.findUnique({ where: { id } });
+  if (!project) throw new Error("Project not found");
+
+  if (project.buyerId !== payload.buyerId) {
+    throw new Error("You are not authorized to update this project");
+  }
+
+  if (project.status === ProjectStatus.ASSIGNED) {
+    // Block editing core fields
+    if (payload.title || payload.skillsRequired) {
+      throw new Error(
+        "Cannot edit core fields (title, skills) after project is assigned",
+      );
+    }
+  }
+
+  const updateData: any = { ...payload };
+  if (payload.skillsRequired) {
+    updateData.skills = payload.skillsRequired;
+    updateData.tags = payload.skillsRequired;
+    delete updateData.skillsRequired;
+  }
+  if (payload.timeline) {
+    updateData.timeline = new Date(payload.timeline);
+    updateData.deadline = new Date(payload.timeline);
+  }
+  delete updateData.buyerId; // Don't update buyerId
+
+  const result = await prisma.project.update({
+    where: { id },
+    data: updateData,
+  });
+
+  return result;
+};
+
+// Delete Project
+const deleteProject = async (id: string, buyerId: string) => {
+  const project = await prisma.project.findUnique({ where: { id } });
+  if (!project) throw new Error("Project not found");
+
+  if (project.buyerId !== buyerId) {
+    throw new Error("You are not authorized to delete this project");
+  }
+
+  const result = await prisma.project.delete({
+    where: { id },
+  });
+
+  return result;
+};
+
+// Request Project (Solver)
 const requestProject = async (payload: IProjectRequestPayload) => {
   // Check if project exists and is OPEN
   const project = await prisma.project.findUnique({
@@ -107,7 +214,7 @@ const requestProject = async (payload: IProjectRequestPayload) => {
   });
 
   if (existingRequest) {
-    throw new Error("Request already sent for this project");
+    throw new Error("You have already requested to work on this project");
   }
 
   const result = await prisma.workRequest.create({
@@ -115,86 +222,134 @@ const requestProject = async (payload: IProjectRequestPayload) => {
       projectId: payload.projectId,
       solverId: payload.solverId,
       message: payload.message,
-      status: TaskStatus.IN_PROGRESS, // Default status for request, though maybe PENDING would be better but reusing TaskStatus
+      status: RequestStatus.PENDING,
+    },
+    include: {
+      project: { include: { buyer: true } },
+      solver: true,
     },
   });
+
+  // Notify Buyer
+  if (result.project.buyer.email) {
+    await sendNotificationEmail(
+      result.project.buyer.email,
+      "New Project Request",
+      `Solver <strong>${result.solver.name || "A user"}</strong> has requested to work on your project: ${result.project.title}.`,
+      `https://proflow.com/projects/${result.project.id}/requests`,
+      "View Request",
+    );
+  }
+
+  await logActivity(
+    "PROJECT_REQUESTED",
+    `Request sent for project ${project.title}`,
+    payload.solverId,
+    project.id,
+  );
 
   return result;
 };
 
-// Get Project Requests (Admin)
-const getProjectRequests = async (options: any) => {
-  const { page, limit, skip, sortBy, sortOrder } =
-    paginationHelper.calculatePagination(options);
+// Get Project Requests (Buyer)
+const getProjectRequests = async (projectId: string, buyerId: string) => {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+  });
+  if (!project) throw new Error("Project not found");
+  if (project.buyerId !== buyerId) throw new Error("Unauthorized");
 
   const result = await prisma.workRequest.findMany({
-    skip,
-    take: limit,
-    orderBy: {
-      createdAt: sortOrder,
-    },
+    where: { projectId },
     include: {
-      project: true,
       solver: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
+        include: {
+          solverProfile: true,
         },
       },
     },
   });
-
-  const total = await prisma.workRequest.count();
-
-  return {
-    meta: {
-      page,
-      limit,
-      total,
-    },
-    data: result,
-  };
+  return result;
 };
 
-// Assign Solver (Admin)
-const assignSolver = async (payload: IProjectAssignPayload) => {
-  const { projectId, solverId } = payload;
-
+// Assign Solver (Buyer)
+const assignSolver = async (payload: IProjectAssignPayload, buyerId: string) => {
   const project = await prisma.project.findUnique({
-    where: { id: projectId },
+    where: { id: payload.projectId },
   });
 
   if (!project) {
     throw new Error("Project not found");
   }
 
-  const solver = await prisma.user.findUnique({
-    where: { id: solverId },
-  });
-
-  if (!solver) {
-    throw new Error("Solver not found");
+  if (project.buyerId !== buyerId) {
+    throw new Error("You are not authorized to assign a solver for this project");
   }
 
-  const result = await prisma.project.update({
-    where: { id: projectId },
-    data: {
-      assignedSolverId: solverId,
-      status: ProjectStatus.ASSIGNED,
-    },
+  if (project.assignedSolverId) {
+    throw new Error("Project is already assigned to a solver");
+  }
+
+  // Transaction: Update Project -> Accept Request -> Reject Others
+  const result = await prisma.$transaction(async (tx) => {
+    // 1. Update Project
+    const updatedProject = await tx.project.update({
+      where: { id: payload.projectId },
+      data: {
+        assignedSolverId: payload.solverId,
+        status: ProjectStatus.ASSIGNED,
+      },
+      include: {
+        assignedSolver: true,
+        buyer: true,
+      },
+    });
+
+    // 2. Accept this request
+    await tx.workRequest.update({
+      where: {
+        projectId_solverId: {
+          projectId: payload.projectId,
+          solverId: payload.solverId,
+        },
+      },
+      data: {
+        status: RequestStatus.ACCEPTED,
+      },
+    });
+
+    // 3. Reject/Withdraw others
+    await tx.workRequest.updateMany({
+      where: {
+        projectId: payload.projectId,
+        solverId: { not: payload.solverId },
+        status: RequestStatus.PENDING,
+      },
+      data: {
+        status: RequestStatus.REJECTED,
+      },
+    });
+
+    return updatedProject;
   });
 
   // Notify Solver
-  if (solver.email) {
+  if (result.assignedSolver?.email) {
     await sendNotificationEmail(
-      solver.email,
+      result.assignedSolver.email,
       "Project Assigned",
-      `You have been assigned to the project <strong>${project.title}</strong>. You can now start creating tasks.`,
-      `https://proflow.com/projects/${project.id}`,
+      `You have been assigned to the project: <strong>${result.title}</strong>.`,
+      `https://proflow.com/projects/${result.id}`,
       "View Project",
     );
   }
+
+  await logActivity(
+    "SOLVER_ASSIGNED",
+    `Solver assigned to project ${result.title}`,
+    buyerId,
+    result.id,
+  );
 
   return result;
 };
@@ -202,6 +357,9 @@ const assignSolver = async (payload: IProjectAssignPayload) => {
 export const ProjectService = {
   createProject,
   getAllProjects,
+  getProjectById,
+  updateProject,
+  deleteProject,
   requestProject,
   getProjectRequests,
   assignSolver,

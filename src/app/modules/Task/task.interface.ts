@@ -12,6 +12,7 @@ export type ICreateTaskPayload = {
 export type ISubmitTaskPayload = {
   taskId: string;
   fileUrl: string;
+  fileName?: string;
   solverId: string;
 };
 

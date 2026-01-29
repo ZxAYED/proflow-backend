@@ -1,8 +1,8 @@
-import express from "express";
-import { ProjectController } from "./project.controller";
-import auth from "../../middlewares/auth";
 import { Role } from "@prisma/client";
+import express from "express";
+import auth from "../../middlewares/auth";
 import validateRequest from "../../middlewares/validateRequest";
+import { ProjectController } from "./project.controller";
 import { ProjectValidation } from "./project.validation";
 
 const router = express.Router();
@@ -16,7 +16,7 @@ router.post(
 
 router.get(
   "/",
-  auth(Role.SOLVER, Role.BUYER, Role.ADMIN),
+  auth(Role.SOLVER, Role.BUYER, Role.ADMIN, Role.USER),
   ProjectController.getAllProjects,
 );
 
@@ -28,16 +28,35 @@ router.post(
 );
 
 router.get(
-  "/requests",
-  auth(Role.ADMIN),
+  "/:projectId/requests",
+  auth(Role.BUYER),
   ProjectController.getProjectRequests,
 );
 
 router.post(
   "/assign",
-  auth(Role.ADMIN),
+  auth(Role.BUYER),
   validateRequest(ProjectValidation.assignSolverValidationSchema),
   ProjectController.assignSolver,
+);
+
+router.get(
+  "/:id",
+  auth(Role.SOLVER, Role.BUYER, Role.ADMIN, Role.USER),
+  ProjectController.getProjectById,
+);
+
+router.patch(
+  "/:id",
+  auth(Role.BUYER),
+  validateRequest(ProjectValidation.updateProjectValidationSchema),
+  ProjectController.updateProject,
+);
+
+router.delete(
+  "/:id",
+  auth(Role.BUYER),
+  ProjectController.deleteProject,
 );
 
 export const ProjectRoutes = router;

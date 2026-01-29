@@ -1,7 +1,8 @@
 import { Request, Response } from "express";
+import httpStatus from "http-status";
+import { uploadFileToSupabase } from "../../../helpers/uploadFileToSupabase";
 import catchAsync from "../../../shared/catchAsync";
 import sendResponse from "../../../shared/sendResponse";
-import httpStatus from "http-status";
 import { TaskService } from "./task.service";
 
 const createTask = catchAsync(async (req: Request, res: Response) => {
@@ -20,10 +21,33 @@ const createTask = catchAsync(async (req: Request, res: Response) => {
 
 const submitTask = catchAsync(async (req: Request, res: Response) => {
   const user = req.user;
-  const { taskId, file } = req.body;
+  let fileUrl = req.body.file;
+
+  if (req.file) {
+    // ZIP-only enforcement
+    const allowedMimeTypes = [
+      "application/zip",
+      "application/x-zip-compressed",
+      "multipart/x-zip",
+      "application/x-compressed",
+    ];
+
+    if (!allowedMimeTypes.includes(req.file.mimetype)) {
+      throw new Error("Only ZIP files are allowed for submissions");
+    }
+
+    fileUrl = await uploadFileToSupabase(req.file);
+  }
+
+  if (!fileUrl) {
+    throw new Error("File or File URL is required");
+  }
+
+  const { taskId } = req.body;
   const result = await TaskService.submitTask({
     taskId,
-    fileUrl: file,
+    fileUrl,
+    fileName: req.file?.originalname || req.body.fileName || "submission.zip",
     solverId: user?.id,
   });
   sendResponse(res, {

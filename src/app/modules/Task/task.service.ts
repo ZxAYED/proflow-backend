@@ -1,16 +1,19 @@
 import {
-  SubmissionStatus,
-  TaskStatus,
-  ProjectStatus,
-  Role,
+    Prisma,
+    Role,
+    SubmissionStatus,
+    TaskStatus
 } from "@prisma/client";
+import { buildDynamicFilters } from "../../../helpers/buildDynamicFilters";
+import { paginationHelper } from "../../../helpers/paginationHelper";
+import { logActivity } from "../../../shared/activityLog";
 import prisma from "../../../shared/prisma";
-import {
-  ICreateTaskPayload,
-  IReviewTaskPayload,
-  ISubmitTaskPayload,
-} from "./task.interface";
 import { sendNotificationEmail } from "../../../utils/notificationSender";
+import {
+    ICreateTaskPayload,
+    IReviewTaskPayload,
+    ISubmitTaskPayload,
+} from "./task.interface";
 
 // Create Task
 const createTask = async (payload: ICreateTaskPayload) => {
@@ -35,11 +38,81 @@ const createTask = async (payload: ICreateTaskPayload) => {
       description: payload.description,
       timeline: new Date(payload.timeline),
       deadline: new Date(payload.timeline), // Mirror
-      status: payload.status,
+      status: payload.status || TaskStatus.IN_PROGRESS,
     },
   });
 
+  await logActivity(
+    "TASK_CREATED",
+    `Task ${result.title} created`,
+    payload.solverId,
+    project.id,
+    result.id,
+  );
+
   return result;
+};
+
+// Get Tasks (with filters and pagination)
+const getTasks = async (options: any, filters: any, userId: string, role: string) => {
+  const { page, limit, skip, sortBy, sortOrder } =
+    paginationHelper.calculatePagination(options);
+  const { searchTerm, ...filterData } = filters;
+
+  const searchFields = ["title", "description"];
+  const filterableFields = ["status", "projectId", "solverId"];
+
+  const whereConditions = buildDynamicFilters(
+    { searchTerm, ...filterData },
+    searchFields,
+    filterableFields,
+  ) as Prisma.TaskWhereInput;
+
+  // Role-based filtering
+  if (role === Role.SOLVER) {
+    whereConditions.solverId = userId;
+  } else if (role === Role.BUYER) {
+    // Buyer can see tasks for their projects
+    whereConditions.project = {
+      buyerId: userId,
+    };
+  }
+
+  const result = await prisma.task.findMany({
+    where: whereConditions,
+    skip,
+    take: limit,
+    orderBy: {
+      [sortBy]: sortOrder,
+    },
+    include: {
+      project: {
+        select: {
+          title: true,
+          buyerId: true,
+        },
+      },
+      submissions: {
+        orderBy: {
+          createdAt: 'desc'
+        },
+        take: 1
+      }
+    },
+  });
+
+  const total = await prisma.task.count({
+    where: whereConditions,
+  });
+
+  return {
+    meta: {
+      page,
+      limit,
+      total,
+    },
+    data: result,
+  };
 };
 
 // Submit Task
@@ -56,12 +129,20 @@ const submitTask = async (payload: ISubmitTaskPayload) => {
     throw new Error("You are not the owner of this task");
   }
 
+  // State Transition Check: Must be IN_PROGRESS or REJECTED (if re-submitting)
+  // Actually, REJECTED status sets task back to IN_PROGRESS in reviewTask, so status should be IN_PROGRESS.
+  // But let's allow REJECTED just in case it wasn't flipped, though logic below says it should be.
+  if (task.status !== TaskStatus.IN_PROGRESS) {
+    throw new Error("Task must be IN_PROGRESS to submit");
+  }
+
   // Create submission
   const submission = await prisma.submission.create({
     data: {
       taskId: payload.taskId,
       solverId: payload.solverId,
       fileUrl: payload.fileUrl,
+      fileName: payload.fileName,
       status: SubmissionStatus.SUBMITTED,
     },
   });
@@ -86,6 +167,14 @@ const submitTask = async (payload: ISubmitTaskPayload) => {
     );
   }
 
+  await logActivity(
+    "TASK_SUBMITTED",
+    `Task ${updatedTask.title} submitted`,
+    payload.solverId,
+    updatedTask.projectId,
+    updatedTask.id,
+  );
+
   return submission;
 };
 
@@ -107,7 +196,11 @@ const reviewTask = async (payload: IReviewTaskPayload) => {
     throw new Error("You are not the owner of this project");
   }
 
-  // Find the latest submission (or specific one, but usually latest)
+  if (task.status !== TaskStatus.SUBMITTED) {
+    throw new Error("Task is not in SUBMITTED state");
+  }
+
+  // Find the latest submission
   const submission = await prisma.submission.findFirst({
     where: { taskId: payload.taskId },
     orderBy: { createdAt: "desc" },
@@ -126,7 +219,7 @@ const reviewTask = async (payload: IReviewTaskPayload) => {
     },
   });
 
-  // Update task status if accepted
+  // Update task status based on review
   if (payload.status === SubmissionStatus.ACCEPTED) {
     await prisma.task.update({
       where: { id: payload.taskId },
@@ -145,6 +238,15 @@ const reviewTask = async (payload: IReviewTaskPayload) => {
         "View Task",
       );
     }
+
+    await logActivity(
+      "TASK_ACCEPTED",
+      `Task ${task.title} accepted`,
+      payload.buyerId,
+      task.projectId,
+      task.id,
+    );
+
   } else if (payload.status === SubmissionStatus.REJECTED) {
     await prisma.task.update({
       where: { id: payload.taskId },
@@ -163,6 +265,14 @@ const reviewTask = async (payload: IReviewTaskPayload) => {
         "View Task",
       );
     }
+
+    await logActivity(
+      "TASK_REJECTED",
+      `Task ${task.title} rejected`,
+      payload.buyerId,
+      task.projectId,
+      task.id,
+    );
   }
 
   return updatedSubmission;
@@ -170,6 +280,7 @@ const reviewTask = async (payload: IReviewTaskPayload) => {
 
 export const TaskService = {
   createTask,
+  getTasks,
   submitTask,
   reviewTask,
 };

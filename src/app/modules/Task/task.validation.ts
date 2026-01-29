@@ -14,7 +14,7 @@ const createTaskValidationSchema = z.object({
 const submitTaskValidationSchema = z.object({
   body: z.object({
     taskId: z.string().min(1, "Task ID is required"),
-    file: z.string().url("File URL must be a valid URL"),
+    file: z.string().url("File URL must be a valid URL").optional(),
   }),
 });
 
