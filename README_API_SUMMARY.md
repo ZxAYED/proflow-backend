@@ -1,87 +1,263 @@
-# ProFlow Backend API Summary & Test Plan
+# ProFlow Backend API Documentation
 
-## Overview
-This document summarizes the key API modules, their role-based access controls, and a testing guide for the ProFlow marketplace workflow.
+Base URL: `http://localhost:5000/api/v1`
 
-## 1. Authentication & Users
-- **POST /auth/register**: Register as BUYER or SOLVER.
-- **POST /auth/login**: Get access token.
+## 1. Authentication
 
-## 2. Solver Profile (Role: SOLVER)
-- **GET /solver-profiles/:id**: Public view of solver profile.
-- **PATCH /solver-profiles/me/profile**: Update bio, hourly rate, skills.
-- **POST /solver-profiles/education**: Add education.
-- **POST /solver-profiles/experience**: Add work experience.
-- **POST /solver-profiles/projects**: Add personal portfolio project (Requires `imageUrl`).
+### Register User (Multipart/Form-Data)
 
-## 3. Projects (Role: BUYER)
-- **POST /projects**: Create a new project (Status: OPEN).
-- **GET /projects**: List projects (Filter by status, skills).
-- **GET /projects/:id/requests**: View pending work requests.
-- **GET /projects/:id/activity**: View project activity feed.
+- **Endpoint**: `POST /auth/register`
+- **Auth**: Public
+- **Content-Type**: `multipart/form-data`
+- **Body**:
+  | Key | Type | Description |
+  |-----|------|-------------|
+  | `email` | Text | User email |
+  | `password` | Text | Min 6 chars |
+  | `name` | Text | Full name (Optional) |
+  | `role` | Text | `BUYER` or `SOLVER` |
+  | `file` | File | Avatar image (Optional) |
+- **Response**:
+  ```json
+  {
+    "statusCode": 201,
+    "success": true,
+    "message": "User registered successfully!",
+    "data": {
+      "id": "uuid...",
+      "email": "user@example.com",
+      "role": "SOLVER",
+      "avatarUrl": "https://..."
+    }
+  }
+  ```
 
-## 4. Work Requests (Role: SOLVER -> BUYER)
-- **POST /requests**: Solver requests to work on an OPEN project.
-- **POST /requests/:requestId/accept**: Buyer accepts a request.
-  - *Effect*: Project status -> ASSIGNED. Other requests -> REJECTED. Solver notified.
+### Login
 
-## 5. Tasks & Subitems (Role: SOLVER)
-- **POST /tasks**: Create a task for an assigned project.
-  - *Effect*: Project status -> IN_PROGRESS (if first task).
-- **POST /tasks/:taskId/items**: Add subtasks (checklist).
-- **PATCH /task-items/:id**: Mark subitem as done (`isDone: true`).
-- **POST /tasks/:taskId/submissions**: Submit work (ZIP file URL required).
-  - *Effect*: Task status -> SUBMITTED. Buyer notified.
-
-## 6. Review Workflow (Role: BUYER)
-- **GET /tasks/:taskId/submissions/latest**: View submission.
-- **PATCH /tasks/:taskId/review**: Accept or Reject submission.
-  - **Accept**: Task -> COMPLETED. If all tasks completed -> Project -> COMPLETED.
-  - **Reject**: Task -> REJECTED. Requires `reviewComments`.
-
-## 7. Dashboard & Realtime
-- **GET /dashboard**: Role-specific metrics (Tasks due, Pending requests, etc.).
-- **GET /realtime/events**: SSE endpoint for live activity updates.
+- **Endpoint**: `POST /auth/login`
+- **Auth**: Public
+- **Body**:
+  ```json
+  {
+    "email": "user@example.com",
+    "password": "secret_password"
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "data": {
+      "accessToken": "ey...",
+      "refreshToken": "ey..."
+    }
+  }
+  ```
 
 ---
 
-## Test Plan / Verification Scenarios
+## 2. Projects (Role: BUYER)
 
-### Scenario A: Full Project Lifecycle
-1. **Setup**:
-   - Register User A (Buyer).
-   - Register User B (Solver).
-2. **Project Creation**:
-   - User A creates Project "Website Redesign".
-   - Verify status is `OPEN`.
-3. **Bidding**:
-   - User B requests to work on "Website Redesign".
-   - User A sees request in `/projects/:id/requests`.
-4. **Assignment**:
-   - User A accepts User B's request.
-   - Verify Project status is `ASSIGNED`.
-   - Verify User B receives email notification.
-5. **Execution**:
-   - User B creates Task "Homepage Layout".
-   - User B adds subitems "Header", "Footer".
-   - User B marks subitems as done.
-   - User B submits task (ZIP link).
-   - Verify Task status is `SUBMITTED`.
-6. **Review**:
-   - User A reviews submission.
-   - User A accepts submission.
-   - Verify Task status `COMPLETED`.
-   - Verify Project status `COMPLETED` (since it's the only task).
+### Create Project (Multipart/Form-Data)
 
-### Scenario B: Rejection Flow
-1. **Submission**: User B submits task.
-2. **Rejection**: User A rejects with comment "Fix header alignment".
-   - Verify Task status `REJECTED`.
-   - User B receives email with comments.
-3. **Resubmission**: User B submits again.
-   - Verify Task status `SUBMITTED`.
+- **Endpoint**: `POST /projects`
+- **Auth**: `BUYER`
+- **Content-Type**: `multipart/form-data`
+- **Body**:
+  | Key | Type | Description |
+  |-----|------|-------------|
+  | `title` | Text | 4-120 chars |
+  | `description` | Text | 30-5000 chars |
+  | `budget` | Number | Optional |
+  | `deadline` | Text | ISO Date String (e.g. `2024-12-31T23:59:59Z`) |
+  | `skillsRequired[]`| Text | Repeat for each skill (e.g. `React`, `Node`) |
+  | `file` | File | Cover image (Optional) |
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "data": { "id": "...", "title": "..." }
+  }
+  ```
 
-### Scenario C: Security Checks
-- Verify SOLVER cannot edit Project details.
-- Verify BUYER cannot create Tasks.
-- Verify User C cannot view User A's dashboard stats.
+### Update Project
+
+- **Endpoint**: `PATCH /projects/:id`
+- **Auth**: `BUYER`
+- **Content-Type**: `multipart/form-data`
+- **Body**: Same fields as Create, but all optional.
+
+### Get All Projects
+
+- **Endpoint**: `GET /projects`
+- **Params**:
+  - `page`: Number (Default 1)
+  - `limit`: Number (Default 10)
+  - `searchTerm`: String (Search title/desc)
+  - `minBudget`: Number
+  - `maxBudget`: Number
+  - `status`: `OPEN`, `ASSIGNED`, `IN_PROGRESS`, `COMPLETED`
+
+---
+
+## 3. Work Requests
+
+### Request to Work (Role: SOLVER)
+
+- **Endpoint**: `POST /projects/request`
+- **Auth**: `SOLVER`
+- **Body**:
+  ```json
+  {
+    "projectId": "uuid-of-project",
+    "message": "I can do this!"
+  }
+  ```
+
+### View Requests (Role: BUYER)
+
+- **Endpoint**: `GET /projects/:projectId/requests`
+- **Auth**: `BUYER`
+
+### Assign Solver (Role: BUYER)
+
+- **Endpoint**: `POST /projects/assign`
+- **Auth**: `BUYER`
+- **Body**:
+  ```json
+  {
+    "projectId": "uuid-of-project",
+    "solverId": "uuid-of-solver"
+  }
+  ```
+
+---
+
+## 4. Tasks (Role: SOLVER)
+
+### Create Task
+
+- **Endpoint**: `POST /tasks`
+- **Auth**: `SOLVER`
+- **Body**:
+  ```json
+  {
+    "projectId": "uuid-of-project",
+    "title": "Setup Database",
+    "description": "Install Postgres and run migrations",
+    "timeline": "2024-12-01T10:00:00Z"
+  }
+  ```
+
+### Submit Task (Multipart/Form-Data)
+
+- **Endpoint**: `POST /tasks/:taskId/submissions`
+- **Auth**: `SOLVER`
+- **Content-Type**: `multipart/form-data`
+- **Body**:
+  | Key | Type | Description |
+  |-----|------|-------------|
+  | `file` | File | ZIP/RAR/ISO file |
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "Task submitted successfully!"
+  }
+  ```
+
+### Add Sub-items (Checklist)
+
+- **Endpoint**: `POST /tasks/:taskId/items`
+- **Auth**: `SOLVER`
+- **Body**:
+  ```json
+  {
+    "title": "Install Prisma",
+    "isDone": false,
+    "order": 1
+  }
+  ```
+
+---
+
+## 5. Review (Role: BUYER)
+
+### Review Submission
+
+- **Endpoint**: `PATCH /tasks/:taskId/review`
+- **Auth**: `BUYER`
+- **Body (Accept)**:
+  ```json
+  {
+    "status": "ACCEPTED"
+  }
+  ```
+- **Body (Reject)**:
+  ```json
+  {
+    "status": "REJECTED",
+    "reviewComments": "Fix the migration script error."
+  }
+  ```
+
+---
+
+## 6. Solver Profile (Role: SOLVER)
+
+### Add Personal Project (Multipart/Form-Data)
+
+- **Endpoint**: `POST /solver-profiles/projects`
+- **Auth**: `SOLVER`
+- **Content-Type**: `multipart/form-data`
+- **Body**:
+  | Key | Type | Description |
+  |-----|------|-------------|
+  | `title` | Text | Required |
+  | `description` | Text | Optional |
+  | `projectUrl` | Text | Optional URL |
+  | `file` | File | Project Screenshot (Required) |
+
+### Update Profile
+
+- **Endpoint**: `PATCH /solver-profiles/me/profile`
+- **Auth**: `SOLVER`
+- **Body**:
+  ```json
+  {
+    "bio": "Full stack developer...",
+    "skills": ["React", "Node.js"],
+    "experience": "5 years...",
+    "portfolio": "https://myportfolio.com"
+  }
+  ```
+
+---
+
+## 7. Dashboard & Realtime
+
+### Get Dashboard Stats
+
+- **Endpoint**: `GET /dashboard/buyer` (or `/dashboard/solver`)
+- **Auth**: Role specific
+- **Response**:
+  ```json
+  {
+    "data": {
+      "totalProjects": 5,
+      "activeProjects": 2,
+      "pendingRequests": 1
+      // ... role specific fields
+    }
+  }
+  ```
+
+### Realtime Events (SSE)
+
+- **Endpoint**: `GET /realtime/events`
+- **Auth**: Public (Connect with EventSource)
+- **Headers**: `Accept: text/event-stream`
+- **Events**:
+  - `project-update`: Project status changes.
+  - `task-update`: Task submission/review.
+  - `notification`: New alerts for user.

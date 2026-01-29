@@ -1,20 +1,21 @@
 import {
-    ActivityAction,
-    Prisma,
-    ProjectStatus,
-    Role
+  ActivityAction,
+  Prisma,
+  ProjectStatus,
+  Role
 } from "@prisma/client";
 import httpStatus from "http-status";
 import { buildDynamicFilters } from "../../../helpers/buildDynamicFilters";
+import { deleteImageFromSupabase } from "../../../helpers/deleteImageFromSupabase";
 import { paginationHelper } from "../../../helpers/paginationHelper";
 import { logActivity } from "../../../shared/activityLog";
 import prisma from "../../../shared/prisma";
 import AppError from "../../Errors/AppError";
 import {
-    ICreateProjectPayload,
-    IProjectAssignPayload,
-    IProjectRequestPayload,
-    IUpdateProjectPayload,
+  ICreateProjectPayload,
+  IProjectAssignPayload,
+  IProjectRequestPayload,
+  IUpdateProjectPayload,
 } from "./project.interface";
 
 // Create Project
@@ -193,6 +194,17 @@ const updateProject = async (
 const deleteProject = async (projectId: string, userId: string) => {
   const project = await prisma.project.findUnique({
     where: { id: projectId },
+    include: {
+      tasks: {
+        include: {
+          submissions: {
+            select: {
+              fileUrl: true,
+            },
+          },
+        },
+      },
+    },
   });
 
   if (!project) {
@@ -213,6 +225,32 @@ const deleteProject = async (projectId: string, userId: string) => {
   const result = await prisma.project.delete({
     where: { id: projectId },
   });
+
+  // Collect all files to delete (Cover Image + Submission Files)
+  const filesToDelete: string[] = [];
+  if (project.coverImageUrl) {
+    filesToDelete.push(project.coverImageUrl);
+  }
+
+  if (project.tasks && project.tasks.length > 0) {
+    project.tasks.forEach((task) => {
+      if (task.submissions) {
+        task.submissions.forEach((sub) => {
+          if (sub.fileUrl) filesToDelete.push(sub.fileUrl);
+        });
+      }
+    });
+  }
+
+  // Perform file deletion asynchronously to avoid blocking response
+  if (filesToDelete.length > 0) {
+    Promise.allSettled(filesToDelete.map((url) => deleteImageFromSupabase(url))).then((results) => {
+      const failures = results.filter((r) => r.status === "rejected");
+      if (failures.length > 0) {
+        console.error(`[Project] Failed to delete ${failures.length} files for project ${projectId}`);
+      }
+    });
+  }
 
   return result;
 };
@@ -316,13 +354,7 @@ const assignSolver = async (payload: IProjectAssignPayload, buyerId: string) => 
     },
   });
     
-  // Also update the specific request to ACCEPTED and others to REJECTED?
-  // The prompt for this phase doesn't explicitly ask for Request logic update, but we should maintain consistency if possible.
-  // However, the prompt says "Do NOT implement Requests... in this phase".
-  // But since I already have it, I'll leave it as is or minimally touch it. 
-  // The previous turn implemented `acceptWorkRequest` in `WorkRequestService`. 
-  // `ProjectService.assignSolver` might be redundant or the direct way. 
-  // I will keep it for now as it's in the file, but `WorkRequestService` is the "marketplace heart" logic.
+
   
   return result;
 };

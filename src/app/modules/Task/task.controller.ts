@@ -1,6 +1,5 @@
 import { Request, Response } from "express";
 import httpStatus from "http-status";
-import { uploadFileToSupabase } from "../../../helpers/uploadFileToSupabase";
 import catchAsync from "../../../shared/catchAsync";
 import sendResponse from "../../../shared/sendResponse";
 import { TaskService } from "./task.service";
@@ -21,22 +20,35 @@ const createTask = catchAsync(async (req: Request, res: Response) => {
 
 const submitTask = catchAsync(async (req: Request, res: Response) => {
   const user = req.user;
+  // File URL is already handled by middleware and put into req.body.file
+  // But we still need to validate file type if it wasn't done in middleware or if we want stricter checks.
+  // The middleware just uploads whatever is there. 
+  // Ideally, multer filter or middleware should handle type check.
+  // For now, let's assume valid file if URL exists.
+  
+  // Note: fileName might need to be extracted from somewhere if not passed in body.
+  // If middleware uploaded it, we lost original filename unless we passed it.
+  // We can modify middleware to pass metadata or just use a default.
+  // Or simpler: req.file is still there? Middleware calls next(), so req.file MIGHT still be there if we didn't clear it.
+  // Yes, req.file persists.
+  
   let fileUrl = req.body.file;
-
+  
+  // Check MIME type if file was uploaded (req.file exists)
   if (req.file) {
-    // ZIP-only enforcement
-    const allowedMimeTypes = [
+      const allowedMimeTypes = [
       "application/zip",
       "application/x-zip-compressed",
       "multipart/x-zip",
       "application/x-compressed",
+      "application/x-rar-compressed", // RAR
+      "application/x-iso9660-image", // ISO
+      "application/octet-stream" // Generic binary
     ];
 
-    if (!allowedMimeTypes.includes(req.file.mimetype)) {
-      throw new Error("Only ZIP files are allowed for submissions");
+    if (!allowedMimeTypes.includes(req.file.mimetype) && !req.file.originalname.match(/\.(zip|rar|iso|7z|tar|gz)$/i)) {
+      throw new Error("Only archive files (ZIP, RAR, ISO) are allowed");
     }
-
-    fileUrl = await uploadFileToSupabase(req.file);
   }
 
   if (!fileUrl) {

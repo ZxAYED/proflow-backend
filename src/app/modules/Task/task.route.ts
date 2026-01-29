@@ -2,12 +2,12 @@ import { Role } from "@prisma/client";
 import express from "express";
 import upload from "../../../helpers/upload";
 import auth from "../../middlewares/auth";
+import { fileUploadHandler } from "../../middlewares/fileUploadHandler";
 import validateRequest from "../../middlewares/validateRequest";
 import { TaskController } from "./task.controller";
 import { TaskSubItemController } from "./task.subitem.controller";
 import { TaskSubItemValidation } from "./task.subitem.validation";
 import { TaskValidation } from "./task.validation";
-
 const router = express.Router();
 
 router.post(
@@ -17,17 +17,14 @@ router.post(
   TaskController.createTask,
 );
 
+
+
 // Submissions
 router.post(
   "/:taskId/submissions",
   auth(Role.SOLVER),
   upload.single("file"),
-  (req, res, next) => {
-    if (req.body.data) {
-       req.body = JSON.parse(req.body.data);
-    }
-    next();
-  },
+  fileUploadHandler("file", "file"), // Sets req.body.file to public URL
   validateRequest(TaskValidation.submitTaskValidationSchema),
   TaskController.submitTask,
 );

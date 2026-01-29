@@ -1,7 +1,7 @@
+import { Role } from "@prisma/client";
 import express from "express";
 import auth from "../../middlewares/auth";
 import validateRequest from "../../middlewares/validateRequest";
-import { Role } from "@prisma/client";
 import { SolverProfileController } from "./solverProfile.controller";
 import { SolverProfileValidation } from "./solverProfile.validation";
 
@@ -37,10 +37,15 @@ router.post(
 );
 router.delete("/experience/:id", auth(Role.SOLVER), SolverProfileController.deleteExperience);
 
+import upload from "../../../helpers/upload";
+import { fileUploadHandler } from "../../middlewares/fileUploadHandler";
+
 // Personal Projects
 router.post(
   "/projects",
   auth(Role.SOLVER),
+  upload.single("file"),
+  fileUploadHandler("imageUrl", "image"),
   validateRequest(SolverProfileValidation.addProjectSchema),
   SolverProfileController.addProject
 );

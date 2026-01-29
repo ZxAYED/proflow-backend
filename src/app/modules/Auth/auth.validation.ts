@@ -13,6 +13,7 @@ const registerValidationSchema = z.object({
     password: z.string().min(6),
     name: z.string().optional(),
     role: z.enum(["SOLVER", "BUYER"]).optional(), // User can request a role, but backend enforces default if needed
+    avatarUrl: z.string().url().optional(),
   }),
 });
 

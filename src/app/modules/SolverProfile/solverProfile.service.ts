@@ -1,7 +1,8 @@
-import { Education, Experience, PersonalProject, SolverProfile } from "@prisma/client";
+import { SolverProfile } from "@prisma/client";
+import httpStatus from "http-status";
+import { deleteImageFromSupabase } from "../../../helpers/deleteImageFromSupabase";
 import prisma from "../../../shared/prisma";
 import AppError from "../../Errors/AppError";
-import httpStatus from "http-status";
 
 const getProfile = async (userId: string) => {
   const result = await prisma.solverProfile.findUnique({
@@ -111,7 +112,19 @@ const deleteProject = async (userId: string, projectId: string) => {
   if (!proj || proj.userId !== userId) {
     throw new AppError(httpStatus.FORBIDDEN, "Project not found or access denied");
   }
-  return await prisma.personalProject.delete({ where: { id: projectId } });
+
+  const result = await prisma.personalProject.delete({ where: { id: projectId } });
+
+  if (proj.imageUrl) {
+    // Perform file deletion asynchronously to avoid blocking the response
+    // and to ensure DB consistency is prioritized.
+    // If file deletion fails, it's a "leak" but not a data integrity issue for the app.
+    deleteImageFromSupabase(proj.imageUrl).catch((err) => {
+      console.error(`[SolverProfile] Failed to delete image for project ${projectId}:`, err);
+    });
+  }
+
+  return result;
 };
 
 export const SolverProfileService = {

@@ -5,11 +5,16 @@ import validateRequest from "../../middlewares/validateRequest";
 import { ProjectController } from "./project.controller";
 import { ProjectValidation } from "./project.validation";
 
+import upload from "../../../helpers/upload";
+import { fileUploadHandler } from "../../middlewares/fileUploadHandler";
+
 const router = express.Router();
 
 router.post(
   "/",
   auth(Role.BUYER),
+  upload.single("file"),
+  fileUploadHandler("coverImageUrl", "image"),
   validateRequest(ProjectValidation.createProjectValidationSchema),
   ProjectController.createProject,
 );
@@ -55,6 +60,8 @@ router.get(
 router.patch(
   "/:id",
   auth(Role.BUYER),
+  upload.single("file"),
+  fileUploadHandler("coverImageUrl", "image"),
   validateRequest(ProjectValidation.updateProjectValidationSchema),
   ProjectController.updateProject,
 );

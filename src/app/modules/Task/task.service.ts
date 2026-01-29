@@ -1,10 +1,10 @@
 import {
-    ActivityAction,
-    Prisma,
-    ProjectStatus,
-    Role,
-    SubmissionStatus,
-    TaskStatus
+  ActivityAction,
+  Prisma,
+  ProjectStatus,
+  Role,
+  SubmissionStatus,
+  TaskStatus
 } from "@prisma/client";
 import { buildDynamicFilters } from "../../../helpers/buildDynamicFilters";
 import { paginationHelper } from "../../../helpers/paginationHelper";
@@ -12,9 +12,9 @@ import { logActivity } from "../../../shared/activityLog";
 import prisma from "../../../shared/prisma";
 import { sendNotificationEmail } from "../../../utils/notificationSender";
 import {
-    ICreateTaskPayload,
-    IReviewTaskPayload,
-    ISubmitTaskPayload,
+  ICreateTaskPayload,
+  IReviewTaskPayload,
+  ISubmitTaskPayload,
 } from "./task.interface";
 
 // Create Task
@@ -51,10 +51,7 @@ const createTask = async (payload: ICreateTaskPayload) => {
         data: { status: ProjectStatus.IN_PROGRESS },
       });
       
-      // Log project status change if needed, or just rely on task creation log
-      // Prompt says: "On first task created OR first submission: If project.status == ASSIGNED → set to IN_PROGRESS + ActivityLog"
-      // ActivityLog for project status change is not explicitly in ActivityAction enum, but we can log generic or just skip if not critical.
-      // However, we MUST log TASK_CREATED.
+  
     }
 
     await logActivity(
@@ -64,7 +61,7 @@ const createTask = async (payload: ICreateTaskPayload) => {
       project.id,
       task.id,
       null,
-      tx // Pass transaction
+      tx 
     );
 
     return task;
@@ -73,7 +70,7 @@ const createTask = async (payload: ICreateTaskPayload) => {
   return result;
 };
 
-// Get Tasks (with filters and pagination)
+
 const getTasks = async (options: any, filters: any, userId: string, role: string) => {
   const { page, limit, skip, sortBy, sortOrder } =
     paginationHelper.calculatePagination(options);

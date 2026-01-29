@@ -1,4 +1,6 @@
 import express from "express";
+import upload from "../../../helpers/upload";
+import { fileUploadHandler } from "../../middlewares/fileUploadHandler";
 import validateRequest from "../../middlewares/validateRequest";
 import { AuthController } from "./auth.controller";
 import { AuthValidation } from "./auth.validation";
@@ -7,6 +9,8 @@ const router = express.Router();
 
 router.post(
   "/register",
+  upload.single("file"),
+  fileUploadHandler("avatarUrl", "image"),
   validateRequest(AuthValidation.registerValidationSchema),
   AuthController.registerUser,
 );
