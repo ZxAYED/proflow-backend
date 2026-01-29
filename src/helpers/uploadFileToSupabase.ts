@@ -7,10 +7,10 @@ export const uploadFileToSupabase = async (
   // Sanitize filename to avoid issues with special characters
   const sanitizedOriginalName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, "_");
   const fileName = `${timestamp}-${sanitizedOriginalName}`;
-  const filePath = `proflow/submissions/${fileName}`;
+  const filePath = `submissions/${fileName}`;
 
   const { data, error } = await supabase.storage
-    .from("attachments")
+    .from("proflow")
     .upload(filePath, file.buffer, {
       contentType: file.mimetype,
     });
@@ -20,7 +20,7 @@ export const uploadFileToSupabase = async (
   }
 
   const { data: publicUrlData } = supabase.storage
-    .from("attachments")
+    .from("proflow")
     .getPublicUrl(filePath);
 
   return publicUrlData.publicUrl;

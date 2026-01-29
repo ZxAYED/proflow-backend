@@ -1,8 +1,8 @@
+import { Role } from "@prisma/client";
+import bcrypt from "bcrypt";
 import { Server as HTTPServer } from "http";
 import app from "./app";
 import prisma from "./shared/prisma";
-import { Role } from "@prisma/client";
-import bcrypt from "bcrypt";
 
 const port = 5000;
 
@@ -10,9 +10,15 @@ async function ensureAdmin() {
   const existingAdmin = await prisma.user.findUnique({
     where: { email: "admin@proflow.com" },
   });
-
+  const existingBuyer = await prisma.user.findUnique({
+    where: { email: "buyer@proflow.com" },
+  });
+  const existingSolver = await prisma.user.findUnique({
+    where: { email: "solver@proflow.com" },
+  });
+  const hashedPassword = await bcrypt.hash("123456", 12);
   if (!existingAdmin) {
-    const hashedPassword = await bcrypt.hash("Admin@123", 12);
+  
     await prisma.user.create({
       data: {
         email: "admin@proflow.com",
@@ -22,11 +28,36 @@ async function ensureAdmin() {
         name: "Super Admin",
       },
     });
+  if (!existingBuyer) {
+   
+    await prisma.user.create({
+      data:   {
+        email: "buyer@proflow.com",
+        passwordHash: hashedPassword,
+        role: Role.BUYER,
+        isVerified: true,
+        name: "Buyer",
+      }
+    });}
     console.log(
-      "✅ Default Admin created (email: admin@proflow.com, password: Admin@123)",
+      "✅ Default Buyer created (email: buyer@proflow.com, password: 123456)",
+    );
+    if (!existingSolver) {
+     
+      await prisma.user.create({
+        data:   {
+          email: "solver@proflow.com",
+          passwordHash: hashedPassword,
+          role: Role.SOLVER,
+          isVerified: true,
+          name: "Solver",
+        }
+      });}
+    console.log(
+      "✅ Default Solver created (email: solver@proflow.com, password: 123456)",
     );
   } else {
-    console.log("ℹ️ Admin already exists, skipping creation.");
+    console.log("ℹ️ Credentials already exists, skipping creation.");
   }
 }
 

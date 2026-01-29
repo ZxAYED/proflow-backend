@@ -278,14 +278,14 @@ const reviewTask = async (payload: IReviewTaskPayload) => {
       activityAction = ActivityAction.SUBMISSION_ACCEPTED;
       activityMessage = `Task ${task.title} accepted`;
 
-      // Check if all tasks completed
-      const allTasks = await tx.task.findMany({
-        where: { projectId: task.projectId },
-      });
-      const allCompleted = allTasks.every((t) => t.status === TaskStatus.COMPLETED || (t.id === task.id)); // Current task is now completed
-      // Note: The task update above ensures current task is completed in DB if we re-fetch, but we used allTasks which might be stale or not.
-      // Better to check all other tasks + this one.
-      // Or just count tasks not completed.
+      // // Check if all tasks completed
+      // const allTasks = await tx.task.findMany({
+      //   where: { projectId: task.projectId },
+      // });
+      // const allCompleted = allTasks.every((t) => t.status === TaskStatus.COMPLETED || (t.id === task.id)); // Current task is now completed
+      // // Note: The task update above ensures current task is completed in DB if we re-fetch, but we used allTasks which might be stale or not.
+      // // Better to check all other tasks + this one.
+      // // Or just count tasks not completed.
       const incompleteCount = await tx.task.count({
         where: {
           projectId: task.projectId,

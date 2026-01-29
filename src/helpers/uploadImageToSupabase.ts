@@ -5,20 +5,21 @@ export const uploadImageToSupabase = async (
 ): Promise<string> => {
   const timestamp = Date.now();
   const fileName = `${timestamp}-${file.originalname.replace(/\s+/g, "-")}`;
-  const filePath = `proflow/images/${fileName}`;
+  const filePath = `images/${fileName}`;
 
   const { data, error } = await supabase.storage
-    .from("attachments")
+    .from("proflow")
     .upload(filePath, file.buffer, {
       contentType: file.mimetype,
     });
 
   if (error) {
-    throw new Error("Image upload failed");
+    console.error("Supabase Upload Error:", error);
+    throw new Error(`Image upload failed: ${error.message}`);
   }
 
   const { data: publicUrlData } = supabase.storage
-    .from("attachments")
+    .from("proflow")
     .getPublicUrl(filePath);
 
   return publicUrlData.publicUrl;

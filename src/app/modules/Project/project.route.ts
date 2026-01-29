@@ -7,6 +7,7 @@ import { ProjectValidation } from "./project.validation";
 
 import upload from "../../../helpers/upload";
 import { fileUploadHandler } from "../../middlewares/fileUploadHandler";
+import { parseMultipartJson } from "../../middlewares/parseMultipartJson";
 
 const router = express.Router();
 
@@ -14,6 +15,7 @@ router.post(
   "/",
   auth(Role.BUYER),
   upload.single("file"),
+  parseMultipartJson,
   fileUploadHandler("coverImageUrl", "image"),
   validateRequest(ProjectValidation.createProjectValidationSchema),
   ProjectController.createProject,
@@ -61,6 +63,7 @@ router.patch(
   "/:id",
   auth(Role.BUYER),
   upload.single("file"),
+  parseMultipartJson,
   fileUploadHandler("coverImageUrl", "image"),
   validateRequest(ProjectValidation.updateProjectValidationSchema),
   ProjectController.updateProject,

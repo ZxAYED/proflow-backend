@@ -102,18 +102,24 @@ export const sendEmail = async (to: string, subject: string, html: string) => {
   }
 };
 
-export const sendOTPEmail = async (to: string, otp: string) => {
-  const subject = "Your OTP for ProFlow";
+export const sendOTPEmail = async (to: string, otp: string, type: "RESET_PASSWORD" | "VERIFY_EMAIL" = "RESET_PASSWORD") => {
+  const isReset = type === "RESET_PASSWORD";
+  const subject = isReset ? "Your Password Reset OTP" : "Verify Your Email";
+  const title = isReset ? "Password Reset OTP" : "Email Verification";
+  const message = isReset 
+    ? "You requested a password reset. Use the OTP below to proceed:" 
+    : "Welcome to ProFlow! Please verify your email address using the OTP below:";
+
   const content = `
     <p>Hello,</p>
-    <p>You requested a password reset. Use the OTP below to proceed:</p>
+    <p>${message}</p>
     <div style="font-size: 32px; font-weight: bold; color: ${primaryColor}; text-align: center; margin: 20px 0;">
       ${otp}
     </div>
     <p>This OTP is valid for 10 minutes.</p>
     <p>If you didn't request this, please ignore this email.</p>
   `;
-  const html = getEmailTemplate(content, "Password Reset OTP");
+  const html = getEmailTemplate(content, title);
   await sendEmail(to, subject, html);
 };
 

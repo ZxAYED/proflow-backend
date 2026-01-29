@@ -3,6 +3,7 @@ import { uploadFileToSupabase } from "../../helpers/uploadFileToSupabase";
 import { uploadImageToSupabase } from "../../helpers/uploadImageToSupabase";
 
 export const fileUploadHandler = (fieldName: string, type: 'image' | 'file' = 'image') => {
+        
   return async (req: Request, res: Response, next: NextFunction) => {
     if (!req.file) {
       return next();
@@ -12,8 +13,10 @@ export const fileUploadHandler = (fieldName: string, type: 'image' | 'file' = 'i
       let publicUrl: string;
       if (type === 'image') {
          publicUrl = await uploadImageToSupabase(req.file);
+       
       } else {
          publicUrl = await uploadFileToSupabase(req.file);
+         
       }
       
       // Attach to body as if it was sent in JSON

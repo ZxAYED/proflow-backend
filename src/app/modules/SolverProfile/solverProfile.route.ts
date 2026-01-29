@@ -39,12 +39,14 @@ router.delete("/experience/:id", auth(Role.SOLVER), SolverProfileController.dele
 
 import upload from "../../../helpers/upload";
 import { fileUploadHandler } from "../../middlewares/fileUploadHandler";
+import { parseMultipartJson } from "../../middlewares/parseMultipartJson";
 
 // Personal Projects
 router.post(
   "/projects",
   auth(Role.SOLVER),
   upload.single("file"),
+  parseMultipartJson,
   fileUploadHandler("imageUrl", "image"),
   validateRequest(SolverProfileValidation.addProjectSchema),
   SolverProfileController.addProject

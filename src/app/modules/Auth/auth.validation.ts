@@ -12,7 +12,7 @@ const registerValidationSchema = z.object({
     email: z.string().email(),
     password: z.string().min(6),
     name: z.string().optional(),
-    role: z.enum(["SOLVER", "BUYER"]).optional(), // User can request a role, but backend enforces default if needed
+    role: z.enum(["SOLVER", "BUYER","USER"]), // User can request a role, but backend enforces default if needed
     avatarUrl: z.string().url().optional(),
   }),
 });
@@ -37,10 +37,25 @@ const resetPasswordValidationSchema = z.object({
   }),
 });
 
+const verifyOtpValidationSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+    otp: z.string(),
+  }),
+});
+
+const resendOtpValidationSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+  }),
+});
+
 export const AuthValidation = {
   loginValidationSchema,
   registerValidationSchema,
   refreshTokenValidationSchema,
   forgotPasswordValidationSchema,
   resetPasswordValidationSchema,
+  verifyOtpValidationSchema,
+  resendOtpValidationSchema,
 };

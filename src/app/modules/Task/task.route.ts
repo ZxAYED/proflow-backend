@@ -3,6 +3,7 @@ import express from "express";
 import upload from "../../../helpers/upload";
 import auth from "../../middlewares/auth";
 import { fileUploadHandler } from "../../middlewares/fileUploadHandler";
+import { parseMultipartJson } from "../../middlewares/parseMultipartJson";
 import validateRequest from "../../middlewares/validateRequest";
 import { TaskController } from "./task.controller";
 import { TaskSubItemController } from "./task.subitem.controller";
@@ -24,6 +25,7 @@ router.post(
   "/:taskId/submissions",
   auth(Role.SOLVER),
   upload.single("file"),
+  parseMultipartJson,
   fileUploadHandler("file", "file"), // Sets req.body.file to public URL
   validateRequest(TaskValidation.submitTaskValidationSchema),
   TaskController.submitTask,
