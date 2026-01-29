@@ -87,11 +87,12 @@ const getEmailTemplate = (content: string, title: string) => {
 
 export const sendEmail = async (to: string, subject: string, html: string) => {
   try {
+    const formattedHtml = getEmailTemplate(html, subject);
     const info = await transporter.sendMail({
       from: `"ProFlow" <${config.email.from}>`,
       to,
       subject,
-      html,
+      html: formattedHtml,
     });
     console.log("Message sent: %s", info.messageId);
     return info;

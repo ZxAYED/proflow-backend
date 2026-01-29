@@ -1,5 +1,5 @@
-import { z } from "zod";
 import { SubmissionStatus, TaskStatus } from "@prisma/client";
+import { z } from "zod";
 
 const createTaskValidationSchema = z.object({
   body: z.object({
@@ -12,17 +12,29 @@ const createTaskValidationSchema = z.object({
 });
 
 const submitTaskValidationSchema = z.object({
-  body: z.object({
+  params: z.object({
     taskId: z.string().min(1, "Task ID is required"),
+  }),
+  body: z.object({
     file: z.string().url("File URL must be a valid URL").optional(),
   }),
 });
 
 const reviewTaskValidationSchema = z.object({
-  body: z.object({
+  params: z.object({
     taskId: z.string().min(1, "Task ID is required"),
+  }),
+  body: z.object({
     status: z.enum([SubmissionStatus.ACCEPTED, SubmissionStatus.REJECTED]),
-    reviewComments: z.string().min(1, "Review comments are required"),
+    reviewComments: z.string().optional(),
+  }).refine((data) => {
+    if (data.status === SubmissionStatus.REJECTED) {
+      return !!data.reviewComments && data.reviewComments.trim().length > 0;
+    }
+    return true;
+  }, {
+    message: "Review comments are required when rejecting a submission",
+    path: ["reviewComments"],
   }),
 });
 

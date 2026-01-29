@@ -51,10 +51,11 @@ const getProjectById = catchAsync(async (req: Request, res: Response) => {
 
 const updateProject = catchAsync(async (req: Request, res: Response) => {
   const user = req.user;
-  const result = await ProjectService.updateProject(req.params.id, {
-    ...req.body,
-    buyerId: user?.id,
-  });
+  const result = await ProjectService.updateProject(
+    req.params.id,
+    req.body,
+    user?.id
+  );
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
@@ -111,6 +112,20 @@ const assignSolver = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const getProjectActivity = catchAsync(async (req: Request, res: Response) => {
+    const user = req.user;
+    const { projectId } = req.params;
+    const options = pick(req.query, ["page", "limit"]);
+    const result = await ProjectService.getProjectActivity(projectId, user?.id, user?.role, options);
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Project activity retrieved successfully!",
+        meta: result.meta,
+        data: result.data,
+    });
+});
+
 export const ProjectController = {
   createProject,
   getAllProjects,
@@ -120,4 +135,5 @@ export const ProjectController = {
   requestProject,
   getProjectRequests,
   assignSolver,
+  getProjectActivity,
 };

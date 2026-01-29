@@ -1,5 +1,7 @@
 import {
+    ActivityAction,
     Prisma,
+    ProjectStatus,
     Role,
     SubmissionStatus,
     TaskStatus
@@ -30,25 +32,43 @@ const createTask = async (payload: ICreateTaskPayload) => {
     throw new Error("You are not assigned to this project");
   }
 
-  const result = await prisma.task.create({
-    data: {
-      projectId: payload.projectId,
-      solverId: payload.solverId,
-      title: payload.title,
-      description: payload.description,
-      timeline: new Date(payload.timeline),
-      deadline: new Date(payload.timeline), // Mirror
-      status: payload.status || TaskStatus.IN_PROGRESS,
-    },
-  });
+  const result = await prisma.$transaction(async (tx) => {
+    const task = await tx.task.create({
+      data: {
+        projectId: payload.projectId,
+        solverId: payload.solverId,
+        title: payload.title,
+        description: payload.description,
+        deadline: new Date(payload.timeline),
+        status: payload.status || TaskStatus.IN_PROGRESS,
+      },
+    });
 
-  await logActivity(
-    "TASK_CREATED",
-    `Task ${result.title} created`,
-    payload.solverId,
-    project.id,
-    result.id,
-  );
+    // Project status auto-update: ASSIGNED -> IN_PROGRESS
+    if (project.status === ProjectStatus.ASSIGNED) {
+      await tx.project.update({
+        where: { id: project.id },
+        data: { status: ProjectStatus.IN_PROGRESS },
+      });
+      
+      // Log project status change if needed, or just rely on task creation log
+      // Prompt says: "On first task created OR first submission: If project.status == ASSIGNED → set to IN_PROGRESS + ActivityLog"
+      // ActivityLog for project status change is not explicitly in ActivityAction enum, but we can log generic or just skip if not critical.
+      // However, we MUST log TASK_CREATED.
+    }
+
+    await logActivity(
+      ActivityAction.TASK_CREATED,
+      `Task ${task.title} created`,
+      payload.solverId,
+      project.id,
+      task.id,
+      null,
+      tx // Pass transaction
+    );
+
+    return task;
+  });
 
   return result;
 };
@@ -97,12 +117,25 @@ const getTasks = async (options: any, filters: any, userId: string, role: string
           createdAt: 'desc'
         },
         take: 1
-      }
+      },
+      subtasks: true // Include subtasks for progress calculation
     },
   });
 
   const total = await prisma.task.count({
     where: whereConditions,
+  });
+
+  // Calculate progress for each task
+  const dataWithProgress = result.map(task => {
+    const totalSubitems = task.subtasks.length;
+    const completedSubitems = task.subtasks.filter(st => st.isDone).length;
+    const progress = totalSubitems > 0 ? Math.round((completedSubitems / totalSubitems) * 100) : 0;
+    
+    return {
+      ...task,
+      progress
+    };
   });
 
   return {
@@ -111,7 +144,7 @@ const getTasks = async (options: any, filters: any, userId: string, role: string
       limit,
       total,
     },
-    data: result,
+    data: dataWithProgress,
   };
 };
 
@@ -119,6 +152,7 @@ const getTasks = async (options: any, filters: any, userId: string, role: string
 const submitTask = async (payload: ISubmitTaskPayload) => {
   const task = await prisma.task.findUnique({
     where: { id: payload.taskId },
+    include: { project: { include: { buyer: true } } }
   });
 
   if (!task) {
@@ -129,53 +163,64 @@ const submitTask = async (payload: ISubmitTaskPayload) => {
     throw new Error("You are not the owner of this task");
   }
 
-  // State Transition Check: Must be IN_PROGRESS or REJECTED (if re-submitting)
-  // Actually, REJECTED status sets task back to IN_PROGRESS in reviewTask, so status should be IN_PROGRESS.
-  // But let's allow REJECTED just in case it wasn't flipped, though logic below says it should be.
-  if (task.status !== TaskStatus.IN_PROGRESS) {
-    throw new Error("Task must be IN_PROGRESS to submit");
+  // State Transition Check: Must be IN_PROGRESS or REJECTED
+  if (task.status !== TaskStatus.IN_PROGRESS && task.status !== TaskStatus.REJECTED) {
+    throw new Error("Task must be IN_PROGRESS or REJECTED to submit");
   }
 
-  // Create submission
-  const submission = await prisma.submission.create({
-    data: {
-      taskId: payload.taskId,
-      solverId: payload.solverId,
-      fileUrl: payload.fileUrl,
-      fileName: payload.fileName,
-      status: SubmissionStatus.SUBMITTED,
-    },
-  });
+  const result = await prisma.$transaction(async (tx) => {
+    // Create submission
+    const submission = await tx.submission.create({
+      data: {
+        taskId: payload.taskId,
+        solverId: payload.solverId,
+        fileUrl: payload.fileUrl,
+        fileName: payload.fileName,
+        status: SubmissionStatus.SUBMITTED,
+      },
+    });
 
-  // Update task status
-  const updatedTask = await prisma.task.update({
-    where: { id: payload.taskId },
-    data: {
-      status: TaskStatus.SUBMITTED,
-    },
-    include: { project: { include: { buyer: true } } }, // Include buyer for email
+    // Update task status
+    const updatedTask = await tx.task.update({
+      where: { id: payload.taskId },
+      data: {
+        status: TaskStatus.SUBMITTED,
+      },
+    });
+
+    // Update Project status to IN_PROGRESS if currently ASSIGNED (auto-update rule)
+    if (task.project.status === ProjectStatus.ASSIGNED) {
+      await tx.project.update({
+        where: { id: task.projectId },
+        data: { status: ProjectStatus.IN_PROGRESS },
+      });
+    }
+
+    await logActivity(
+      ActivityAction.SUBMISSION_UPLOADED,
+      `Task ${task.title} submitted`,
+      payload.solverId,
+      task.projectId,
+      task.id,
+      submission.id,
+      tx
+    );
+
+    return { submission, task: updatedTask, project: task.project };
   });
 
   // Notify Buyer
-  if (updatedTask.project.buyer.email) {
+  if (result.project.buyer && result.project.buyer.email) {
     await sendNotificationEmail(
-      updatedTask.project.buyer.email,
+      result.project.buyer.email,
       "Task Submitted",
-      `A task <strong>${updatedTask.title}</strong> has been submitted for review.<br>Project: ${updatedTask.project.title}`,
-      `https://proflow.com/tasks/${updatedTask.id}/review`,
+      `A task <strong>${result.task.title}</strong> has been submitted for review.<br>Project: ${result.project.title}`,
+      `https://proflow.com/tasks/${result.task.id}/review`,
       "Review Submission",
     );
   }
 
-  await logActivity(
-    "TASK_SUBMITTED",
-    `Task ${updatedTask.title} submitted`,
-    payload.solverId,
-    updatedTask.projectId,
-    updatedTask.id,
-  );
-
-  return submission;
+  return result.submission;
 };
 
 // Review Task (Buyer)
@@ -184,7 +229,7 @@ const reviewTask = async (payload: IReviewTaskPayload) => {
     where: { id: payload.taskId },
     include: {
       project: true,
-      solver: true, // Include solver for email
+      solver: true,
     },
   });
 
@@ -210,72 +255,138 @@ const reviewTask = async (payload: IReviewTaskPayload) => {
     throw new Error("No submission found for this task");
   }
 
-  // Update submission status
-  const updatedSubmission = await prisma.submission.update({
-    where: { id: submission.id },
-    data: {
-      status: payload.status,
-      reviewComments: payload.reviewComments,
-    },
-  });
-
-  // Update task status based on review
-  if (payload.status === SubmissionStatus.ACCEPTED) {
-    await prisma.task.update({
-      where: { id: payload.taskId },
+  const result = await prisma.$transaction(async (tx) => {
+    // Update submission status
+    const updatedSubmission = await tx.submission.update({
+      where: { id: submission.id },
       data: {
-        status: TaskStatus.COMPLETED,
+        status: payload.status,
+        reviewComments: payload.reviewComments,
+        buyerId: payload.buyerId,
+        reviewedAt: new Date(),
       },
     });
 
-    // Notify Solver (Accepted)
-    if (task.solver.email) {
-      await sendNotificationEmail(
-        task.solver.email,
-        "Task Accepted",
-        `Your submission for task <strong>${task.title}</strong> has been ACCEPTED.<br>Comments: ${payload.reviewComments}`,
-        `https://proflow.com/tasks/${task.id}`,
-        "View Task",
-      );
+    let activityAction: ActivityAction;
+    let activityMessage: string;
+
+    // Update task status based on review
+    if (payload.status === SubmissionStatus.ACCEPTED) {
+      await tx.task.update({
+        where: { id: payload.taskId },
+        data: {
+          status: TaskStatus.COMPLETED,
+        },
+      });
+      activityAction = ActivityAction.SUBMISSION_ACCEPTED;
+      activityMessage = `Task ${task.title} accepted`;
+
+      // Check if all tasks completed
+      const allTasks = await tx.task.findMany({
+        where: { projectId: task.projectId },
+      });
+      const allCompleted = allTasks.every((t) => t.status === TaskStatus.COMPLETED || (t.id === task.id)); // Current task is now completed
+      // Note: The task update above ensures current task is completed in DB if we re-fetch, but we used allTasks which might be stale or not.
+      // Better to check all other tasks + this one.
+      // Or just count tasks not completed.
+      const incompleteCount = await tx.task.count({
+        where: {
+          projectId: task.projectId,
+          status: { not: TaskStatus.COMPLETED },
+        },
+      });
+      
+      // If incompleteCount is 0, then all tasks are completed.
+      if (incompleteCount === 0) {
+        await tx.project.update({
+          where: { id: task.projectId },
+          data: { status: ProjectStatus.COMPLETED },
+        });
+        
+        await logActivity(
+            ActivityAction.PROJECT_COMPLETED,
+            `Project ${task.project.title} completed`,
+            payload.buyerId,
+            task.projectId,
+            null,
+            null,
+            tx
+        );
+      }
+
+    } else { // REJECTED
+      await tx.task.update({
+        where: { id: payload.taskId },
+        data: {
+          status: TaskStatus.REJECTED,
+        },
+      });
+      activityAction = ActivityAction.SUBMISSION_REJECTED;
+      activityMessage = `Task ${task.title} rejected`;
     }
 
     await logActivity(
-      "TASK_ACCEPTED",
-      `Task ${task.title} accepted`,
+      activityAction,
+      activityMessage,
       payload.buyerId,
       task.projectId,
       task.id,
+      submission.id,
+      tx
     );
 
-  } else if (payload.status === SubmissionStatus.REJECTED) {
-    await prisma.task.update({
-      where: { id: payload.taskId },
-      data: {
-        status: TaskStatus.IN_PROGRESS, // Revert to in progress for re-work
-      },
-    });
+    return updatedSubmission;
+  });
 
-    // Notify Solver (Rejected)
-    if (task.solver.email) {
-      await sendNotificationEmail(
-        task.solver.email,
-        "Task Rejected",
-        `Your submission for task <strong>${task.title}</strong> has been REJECTED.<br>Comments: ${payload.reviewComments}<br>Please revise and resubmit.`,
-        `https://proflow.com/tasks/${task.id}`,
-        "View Task",
-      );
-    }
-
-    await logActivity(
-      "TASK_REJECTED",
-      `Task ${task.title} rejected`,
-      payload.buyerId,
-      task.projectId,
-      task.id,
+  // Notify Solver
+  if (task.solver.email) {
+    const isAccepted = payload.status === SubmissionStatus.ACCEPTED;
+    await sendNotificationEmail(
+      task.solver.email,
+      isAccepted ? "Task Accepted" : "Task Rejected",
+      `Your submission for task <strong>${task.title}</strong> has been ${payload.status}.<br>Comments: ${payload.reviewComments || "No comments"}`,
+      `https://proflow.com/tasks/${task.id}`,
+      "View Task",
     );
   }
 
-  return updatedSubmission;
+  return result;
+};
+
+const getLatestSubmission = async (taskId: string, userId: string, role: string) => {
+    const task = await prisma.task.findUnique({
+        where: { id: taskId },
+        include: { project: true }
+    });
+
+    if (!task) {
+        throw new Error("Task not found");
+    }
+
+    // Access control
+    if (role === Role.SOLVER && task.solverId !== userId) {
+        throw new Error("Access denied");
+    }
+    if (role === Role.BUYER && task.project.buyerId !== userId) {
+        throw new Error("Access denied");
+    }
+
+    const submission = await prisma.submission.findFirst({
+        where: { taskId },
+        orderBy: { createdAt: 'desc' },
+        include: {
+            solver: {
+                select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    avatarUrl: true
+                }
+            }
+        }
+    });
+
+    return submission;
 };
 
 export const TaskService = {
@@ -283,4 +394,5 @@ export const TaskService = {
   getTasks,
   submitTask,
   reviewTask,
+  getLatestSubmission
 };

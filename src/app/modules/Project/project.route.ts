@@ -33,6 +33,12 @@ router.get(
   ProjectController.getProjectRequests,
 );
 
+router.get(
+  "/:projectId/activity",
+  auth(Role.SOLVER, Role.BUYER, Role.ADMIN),
+  ProjectController.getProjectActivity,
+);
+
 router.post(
   "/assign",
   auth(Role.BUYER),

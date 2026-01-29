@@ -1,9 +1,11 @@
-import { ProjectStatus, RequestStatus, Role, WorkRequest } from "@prisma/client";
+import { ActivityAction, ProjectStatus, RequestStatus, Role, WorkRequest } from "@prisma/client";
 import { paginationHelper } from "../../../helpers/paginationHelper";
 import { IGenericResponse } from "../../../interfaces/common";
 import { IPaginationOptions } from "../../../interfaces/pagination";
 import { logActivity } from "../../../shared/activityLog";
 import prisma from "../../../shared/prisma";
+import { sendNotificationEmail } from "../../../utils/notificationSender";
+
 
 const createWorkRequest = async (
   userId: string,
@@ -12,6 +14,7 @@ const createWorkRequest = async (
   // Check if project exists and is OPEN
   const project = await prisma.project.findUnique({
     where: { id: payload.projectId },
+    include: { buyer: true },
   });
 
   if (!project) {
@@ -45,11 +48,22 @@ const createWorkRequest = async (
   });
 
   await logActivity(
-    "REQUEST_CREATED",
+    ActivityAction.SOLVER_REQUESTED,
     `Solver requested to work on project ${project.title}`,
     userId,
     project.id
   );
+
+  // Notify Buyer
+  if (project.buyer.email) {
+    await sendNotificationEmail(
+      project.buyer.email,
+      "New Project Request",
+      `A solver has requested to work on your project "${project.title}".`,
+      `http://localhost:3000/projects/${project.id}/requests`, // Placeholder URL
+      "View Requests"
+    ).catch((err: any) => console.error("Email error:", err));
+  }
 
   return result;
 };
@@ -109,7 +123,7 @@ const getWorkRequests = async (
 const acceptWorkRequest = async (buyerId: string, requestId: string) => {
   const request = await prisma.workRequest.findUnique({
     where: { id: requestId },
-    include: { project: true },
+    include: { project: true, solver: true },
   });
 
   if (!request) {
@@ -155,11 +169,22 @@ const acceptWorkRequest = async (buyerId: string, requestId: string) => {
   });
 
   await logActivity(
-    "REQUEST_ACCEPTED",
+    ActivityAction.SOLVER_ASSIGNED,
     `Buyer accepted request from solver for project ${request.project.title}`,
     buyerId,
     request.projectId
   );
+
+  // Notify Solver
+  if (request.solver.email) {
+    await sendNotificationEmail(
+      request.solver.email,
+      "Request Accepted",
+      `Congratulations! Your request for project "${request.project.title}" has been accepted.`,
+      `http://localhost:3000/projects/${request.project.id}`,
+      "Go to Project"
+    ).catch((err: any) => console.error("Email error:", err));
+  }
 
   return result;
 };

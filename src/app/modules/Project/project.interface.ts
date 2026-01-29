@@ -1,4 +1,4 @@
-import { ProjectStatus, TaskStatus } from "@prisma/client";
+import { ProjectStatus } from "@prisma/client";
 
 export type IProjectFilterRequest = {
   searchTerm?: string;
@@ -22,7 +22,19 @@ export type ICreateProjectPayload = {
   title: string;
   description: string;
   skillsRequired: string[];
-  timeline: string;
+  deadline?: string;
   buyerId: string;
   budget?: number;
+  coverImageUrl?: string;
+  coverImageName?: string;
+};
+
+export type IUpdateProjectPayload = {
+  title?: string;
+  description?: string;
+  skillsRequired?: string[];
+  deadline?: string;
+  budget?: number;
+  coverImageUrl?: string;
+  coverImageName?: string;
 };

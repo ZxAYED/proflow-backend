@@ -43,7 +43,7 @@ const submitTask = catchAsync(async (req: Request, res: Response) => {
     throw new Error("File or File URL is required");
   }
 
-  const { taskId } = req.body;
+  const taskId = req.params.taskId || req.body.taskId;
   const result = await TaskService.submitTask({
     taskId,
     fileUrl,
@@ -60,8 +60,10 @@ const submitTask = catchAsync(async (req: Request, res: Response) => {
 
 const reviewTask = catchAsync(async (req: Request, res: Response) => {
   const user = req.user;
+  const taskId = req.params.taskId || req.body.taskId;
   const result = await TaskService.reviewTask({
     ...req.body,
+    taskId,
     buyerId: user?.id,
   });
   sendResponse(res, {
@@ -72,8 +74,21 @@ const reviewTask = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const getLatestSubmission = catchAsync(async (req: Request, res: Response) => {
+    const user = req.user;
+    const { taskId } = req.params;
+    const result = await TaskService.getLatestSubmission(taskId, user?.id, user?.role);
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Latest submission retrieved successfully",
+        data: result,
+    });
+});
+
 export const TaskController = {
   createTask,
   submitTask,
   reviewTask,
+  getLatestSubmission
 };

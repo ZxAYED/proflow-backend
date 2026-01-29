@@ -20,6 +20,7 @@ enum Role {
 enum ProjectStatus {
   OPEN
   ASSIGNED
+  IN_PROGRESS
   COMPLETED
   CANCELLED
 }
@@ -42,6 +43,18 @@ enum SubmissionStatus {
   SUBMITTED
   ACCEPTED
   REJECTED
+}
+
+enum ActivityAction {
+  PROJECT_CREATED
+  SOLVER_REQUESTED
+  SOLVER_ASSIGNED
+  TASK_CREATED
+  TASK_UPDATED
+  SUBMISSION_UPLOADED
+  SUBMISSION_ACCEPTED
+  SUBMISSION_REJECTED
+  PROJECT_COMPLETED
 }
 
 //
@@ -74,6 +87,11 @@ model User {
   
   // Relation to Personal Projects
   personalProjects PersonalProject[]
+  education        Education[]
+  experience       Experience[]
+
+  activityLogs     ActivityLog[]
+  reviews          Submission[]     @relation("BuyerReviews")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -103,86 +121,84 @@ model SolverProfile {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  title    String? // Profile title
-  bio      String? // Short bio
-  location String?
-
-  skills String[] // Array of skills, e.g., ["React", "Node.js"]
-
-  // URLs for portfolios and professional sites
-  portfolioUrl String?
-  githubUrl    String?
-  linkedinUrl  String?
-
-  // Optional fields for solver profile image and portfolio information
-  profileImageUrl String? // Profile image URL for the solver
-  projectImageUrl String? // Project image URL for the solver's project (mandatory)
-
-  // Additional information about the solver
-  educationBackground String?
-  workingExperience   String?
-
-  // This field helps track the updates of the solver profile
-  isEditable Boolean @default(true) // Initially editable, later it can be locked
+  bio        String?
+  skills     String[]
+  experience String? // Years of experience or description
+  portfolio  String? // URL
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 //
-// PERSONAL PROJECTS (new table for personal projects)
+// PERSONAL PROJECTS (Solver's portfolio items)
 //
 model PersonalProject {
   id          String   @id @default(cuid())
-  solverId    String
+  userId      String
   title       String
   description String?
   projectUrl  String?
-  skills      String[] // Skills used for the project
+  imageUrl    String // Required per requirement
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
 
-  solver User @relation(fields: [solverId], references: [id], onDelete: Cascade)
-
+model Education {
+  id        String   @id @default(cuid())
+  userId    String
+  school    String
+  degree    String
+  startYear String?
+  endYear   String?
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
 
-  @@index([solverId])
+model Experience {
+  id        String   @id @default(cuid())
+  userId    String
+  company   String
+  role      String
+  startDate String? // ISO date or year
+  endDate   String? // ISO date or year or "Present"
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 //
-// PROJECT MODEL (with image)
+// MARKETPLACE PROJECTS
 //
 model Project {
-  id          String    @id @default(cuid())
-  title       String
-  description String
-  tags        String[] // e.g., ["React", "UI", "API"]
-  skills      String[] // Explicit skills required
-  budget      Int?
-  deadline    DateTime?
-  timeline    DateTime? // Expected timeline
+  id             String        @id @default(cuid())
+  title          String
+  description    String
+  skillsRequired String[] // Changed from skills to skillsRequired
+  budget         Float?
+  deadline       DateTime?
+  status         ProjectStatus @default(OPEN)
 
-  status ProjectStatus @default(OPEN)
+  coverImageUrl  String?
+  coverImageName String?
 
-  // Buyer owner
   buyerId String
-  buyer   User   @relation("BuyerProjects", fields: [buyerId], references: [id], onDelete: Cascade)
+  buyer   User   @relation("BuyerProjects", fields: [buyerId], references: [id])
 
-  // One assigned solver (optional for now)
   assignedSolverId String?
-  assignedSolver   User?   @relation("AssignedSolverProjects", fields: [assignedSolverId], references: [id], onDelete: SetNull)
-
-  // Optional project image (buyer can choose)
-  projectImageUrl String?
+  assignedSolver   User?   @relation("AssignedSolverProjects", fields: [assignedSolverId], references: [id])
 
   requests WorkRequest[]
   tasks    Task[]
+  activityLogs ActivityLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([buyerId])
   @@index([status])
-  @@index([assignedSolverId])
 }
 
 //
@@ -208,17 +224,24 @@ model WorkRequest {
 // ACTIVITY LOG MODEL
 //
 model ActivityLog {
-  id        String   @id @default(cuid())
-  userId    String?  // Optional: user who performed the action
-  projectId String?  // Optional: related project
-  taskId    String?  // Optional: related task
-  action    String   // e.g., "REQUESTED", "ACCEPTED", "TASK_CREATED"
-  details   String?  // JSON or text details
+  id           String         @id @default(cuid())
+  action       ActivityAction
+  actorId      String
+  projectId    String?
+  taskId       String?
+  submissionId String?
+  message      String
+  metadata     Json?
 
-  createdAt DateTime @default(now())
+  actor        User           @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  project      Project?       @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  task         Task?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  submission   Submission?    @relation(fields: [submissionId], references: [id], onDelete: SetNull)
 
-  @@index([userId])
-  @@index([projectId])
+  createdAt    DateTime       @default(now())
+
+  @@index([projectId, createdAt])
+  @@index([actorId, createdAt])
 }
 
 //
@@ -229,41 +252,69 @@ model Task {
   projectId   String
   solverId    String // must equal project.assignedSolverId (enforce in service)
   title       String
-  description String?
+  description String
   deadline    DateTime?
-  timeline    DateTime?
   status      TaskStatus @default(IN_PROGRESS)
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   solver  User    @relation(fields: [solverId], references: [id], onDelete: Cascade)
 
   submissions Submission[]
+  subtasks    TaskSubItem[]
+  activityLogs ActivityLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([projectId])
-  @@index([solverId])
+  @@index([projectId, status])
+  @@index([solverId, status])
 }
 
 //
-// SUBMISSION MODEL (for task submissions)
+// TASK SUBITEM MODEL (Subtasks)
+//
+model TaskSubItem {
+  id        String   @id @default(cuid())
+  taskId    String
+  title     String
+  isDone    Boolean  @default(false)
+  order     Int      @default(0)
+
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([taskId])
+}
+
+//
+// SUBMISSION MODEL (TaskSubmission)
 //
 model Submission {
   id        String           @id @default(cuid())
   taskId    String
   solverId  String
+  buyerId   String?          // Nullable until reviewed (or populated if known, but prompt says nullable until reviewed is OK logic or just buyer of project)
+                               // Prompt: "buyerId (FK User, nullable until reviewed)"
   fileUrl   String
   fileName  String?
+  fileSize  Int?
   status    SubmissionStatus @default(SUBMITTED)
   reviewComments String?
 
+  submittedAt DateTime @default(now())
+  reviewedAt  DateTime?
+
   task      Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
   solver    User   @relation("SolverSubmissions", fields: [solverId], references: [id], onDelete: Cascade)
+  buyer     User?  @relation("BuyerReviews", fields: [buyerId], references: [id]) // Add relation
+  activityLogs ActivityLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([taskId])
   @@index([solverId])
+  @@index([status])
 }
